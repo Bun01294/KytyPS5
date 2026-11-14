@@ -5,11 +5,13 @@
 #include "libs/libs.h"
 #include "loader/symbolDatabase.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -33,13 +35,18 @@ struct UltMutexOptParam {
 	uint32_t reserved0;
 };
 
+struct UltWaitingQueueResourcePoolOptParam {
+	uint8_t bytes[64];
+};
+
 struct UltUlthreadRuntimeOptParam {
 	uint8_t bytes[128];
 };
 
 struct UltMutexState {
-	std::recursive_mutex mutex;
-	uint32_t             attribute = 0;
+	std::recursive_mutex  mutex;
+	std::atomic<uint32_t> lock_count {0};
+	uint32_t              attribute = 0;
 };
 
 struct UltSemaphoreState {
@@ -291,6 +298,23 @@ static int KYTY_SYSV_ABI UltUlthreadJoin(void* ulthread, int32_t* status) {
 	return OK;
 }
 
+static int KYTY_SYSV_ABI UltWaitingQueueResourcePoolOptParamInitialize(
+    UltWaitingQueueResourcePoolOptParam* opt_param, uint32_t build_version) {
+	PRINT_NAME();
+
+	if (opt_param == nullptr) {
+		return ULT_ERROR_NULL;
+	}
+
+	LOGF("\t opt_param     = 0x%016" PRIx64 "\n"
+	     "\t build_version = 0x%08" PRIx32 "\n",
+	     reinterpret_cast<uint64_t>(opt_param), build_version);
+
+	std::memset(opt_param, 0, sizeof(*opt_param));
+
+	return OK;
+}
+
 static uint64_t KYTY_SYSV_ABI
 UltWaitingQueueResourcePoolGetWorkAreaSize(uint32_t num_threads, uint32_t num_sync_objects) {
 	PRINT_NAME();
@@ -324,6 +348,50 @@ static int KYTY_SYSV_ABI UltWaitingQueueResourcePoolCreate(void* pool, const cha
 
 	std::scoped_lock lock(g_ult_mutex);
 	g_ult_resource_pools[pool] = {num_threads, num_sync_objects, work_area};
+
+	return OK;
+}
+
+static int KYTY_SYSV_ABI UltWaitingQueueResourcePoolDestroy(void* pool) {
+	PRINT_NAME();
+
+	if (pool == nullptr) {
+		return ULT_ERROR_NULL;
+	}
+
+	std::scoped_lock lock(g_ult_mutex);
+	auto             it = g_ult_resource_pools.find(pool);
+	if (it == g_ult_resource_pools.end()) {
+		return ULT_ERROR_STATE;
+	}
+	g_ult_resource_pools.erase(it);
+	return OK;
+}
+
+static int KYTY_SYSV_ABI UltWaitingQueueResourcePoolGetInfo(void* pool, uint32_t* out_info) {
+	PRINT_NAME();
+
+	if (pool == nullptr) {
+		return ULT_ERROR_NULL;
+	}
+
+	uint32_t num_threads      = 17;
+	uint32_t num_sync_objects = 512;
+	{
+		std::scoped_lock lock(g_ult_mutex);
+		auto             it = g_ult_resource_pools.find(pool);
+		if (it != g_ult_resource_pools.end()) {
+			num_threads      = it->second.num_threads;
+			num_sync_objects = it->second.num_sync_objects;
+		}
+	}
+
+	if (out_info != nullptr) {
+		out_info[0] = 0;
+		out_info[1] = num_threads;
+		out_info[2] = 0;
+		out_info[3] = num_sync_objects;
+	}
 
 	return OK;
 }
@@ -539,12 +607,45 @@ static int KYTY_SYSV_ABI UltMutexLock(void* mutex) {
 		std::scoped_lock lock(g_ult_mutex);
 		auto             it = g_ult_mutexes.find(mutex);
 		if (it == g_ult_mutexes.end()) {
-			return (mutex == nullptr ? ULT_ERROR_NULL : ULT_ERROR_STATE);
+			if (mutex == nullptr) {
+				return ULT_ERROR_NULL;
+			}
+			// Auto-create if game statically initialized or reused mutex address
+			state                = std::make_shared<UltMutexState>();
+			g_ult_mutexes[mutex] = state;
+		} else {
+			state = it->second;
 		}
-		state = it->second;
 	}
 
 	state->mutex.lock();
+	state->lock_count.fetch_add(1, std::memory_order_relaxed);
+
+	return OK;
+}
+
+static int KYTY_SYSV_ABI UltMutexTryLock(void* mutex) {
+	PRINT_NAME();
+
+	std::shared_ptr<UltMutexState> state;
+	{
+		std::scoped_lock lock(g_ult_mutex);
+		auto             it = g_ult_mutexes.find(mutex);
+		if (it == g_ult_mutexes.end()) {
+			if (mutex == nullptr) {
+				return ULT_ERROR_NULL;
+			}
+			state                = std::make_shared<UltMutexState>();
+			g_ult_mutexes[mutex] = state;
+		} else {
+			state = it->second;
+		}
+	}
+
+	if (!state->mutex.try_lock()) {
+		return ULT_ERROR_BUSY;
+	}
+	state->lock_count.fetch_add(1, std::memory_order_relaxed);
 
 	return OK;
 }
@@ -562,7 +663,30 @@ static int KYTY_SYSV_ABI UltMutexUnlock(void* mutex) {
 		state = it->second;
 	}
 
-	state->mutex.unlock();
+	uint32_t prev = state->lock_count.load(std::memory_order_relaxed);
+	while (prev > 0) {
+		if (state->lock_count.compare_exchange_weak(prev, prev - 1, std::memory_order_relaxed)) {
+			state->mutex.unlock();
+			break;
+		}
+	}
+
+	return OK;
+}
+
+static int KYTY_SYSV_ABI UltMutexDestroy(void* mutex) {
+	PRINT_NAME();
+
+	if (mutex == nullptr) {
+		return ULT_ERROR_NULL;
+	}
+
+	std::scoped_lock lock(g_ult_mutex);
+	auto             it = g_ult_mutexes.find(mutex);
+	if (it == g_ult_mutexes.end()) {
+		return OK;
+	}
+	g_ult_mutexes.erase(it);
 
 	return OK;
 }
@@ -715,8 +839,10 @@ LIB_DEFINE(InitUlt_1) {
 	LIB_FUNC("jw9FkZBXo-g", UltUlthreadRuntimeCreate);
 	LIB_FUNC("znI3q8S7KQ4", UltUlthreadCreate);
 	LIB_FUNC("gCeAI57LGgI", UltUlthreadJoin);
+	LIB_FUNC("LuLTRt0rfTw", UltWaitingQueueResourcePoolOptParamInitialize);
 	LIB_FUNC("WIWV1Qd7PFU", UltWaitingQueueResourcePoolGetWorkAreaSize);
 	LIB_FUNC("YiHujOG9vXY", UltWaitingQueueResourcePoolCreate);
+	LIB_FUNC("XSjr+FjsU4s", UltWaitingQueueResourcePoolGetInfo);
 	LIB_FUNC("evj9YPkS8s4", UltQueueDataResourcePoolGetWorkAreaSize);
 	LIB_FUNC("TFHm6-N6vks", UltQueueDataResourcePoolCreate);
 	LIB_FUNC("9Y5keOvb6ok", UltQueueCreate);
@@ -724,6 +850,8 @@ LIB_DEFINE(InitUlt_1) {
 	LIB_FUNC("uZz3ci7XYqc", UltQueueTryPop);
 	LIB_FUNC("1+8t9aHLiz8", UltMutexOptParamInitialize);
 	LIB_FUNC("mmt8Sa6tL6c", UltMutexCreate);
+	LIB_FUNC("jW+HnafeS3Y", UltMutexDestroy);
+	LIB_FUNC("bd7bfN9U3fA", UltMutexTryLock);
 	LIB_FUNC("8hEGkR1pfr8", UltMutexLock);
 	LIB_FUNC("h0XebKiMBtk", UltMutexUnlock);
 	LIB_FUNC("h5QlIYj+Ro8", UltSemaphoreCreate);
