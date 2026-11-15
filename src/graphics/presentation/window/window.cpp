@@ -257,20 +257,20 @@ static void GameEventKeyboard(const EventKeyboard& key) {
 static void GameEventMouse([[maybe_unused]] const EventMouse& mb) {
 #ifdef KYTY_DBG_INPUT
 	if (mb.wheel) {
-		LOGF("Mouse wheel: time = %.04f, %s[%d, %d]\n", mb.timestamp_seconds,
-		     (mb.touch ? "touch, " : ""), mb.x, mb.y);
+		//LOGF("Mouse wheel: time = %.04f, %s[%d, %d]\n", mb.timestamp_seconds,
+		     //(mb.touch ? "touch, " : ""), mb.x, mb.y);
 	} else if (mb.motion) {
-		LOGF("Mouse motion: time = %.04f, %s%s%s%s%s%s, [%d, %d], (%d, %d)\n", mb.timestamp_seconds,
-		     (mb.left ? "left" : ""), (mb.middle ? "middle" : ""), (mb.right ? "right" : ""),
-		     (mb.x1 ? "x1" : ""), (mb.x2 ? "x2" : ""), (mb.touch ? "_touch" : ""), mb.x, mb.y,
-		     mb.motion_x, mb.motion_y);
+		//LOGF("Mouse motion: time = %.04f, %s%s%s%s%s%s, [%d, %d], (%d, %d)\n", mb.timestamp_seconds,
+		     //(mb.left ? "left" : ""), (mb.middle ? "middle" : ""), (mb.right ? "right" : ""),
+		     //(mb.x1 ? "x1" : ""), (mb.x2 ? "x2" : ""), (mb.touch ? "_touch" : ""), mb.x, mb.y,
+		    // mb.motion_x, mb.motion_y); 
 	} else {
-		LOGF("Mouse click: time = %.04f, %d, %s%s%s%s%s%s, %s%s, %s%s, [%d, %d]\n",
-		     mb.timestamp_seconds, mb.num_of_clicks, (mb.left ? "left" : ""),
-		     (mb.middle ? "middle" : ""), (mb.right ? "right" : ""), (mb.x1 ? "x1" : ""),
-		     (mb.x2 ? "x2" : ""), (mb.touch ? "_touch" : ""), (mb.down ? "down" : ""),
-		     (mb.up ? "up" : ""), (mb.pressed ? "pressed" : ""), (mb.released ? "released" : ""),
-		     mb.x, mb.y);
+		//LOGF("Mouse click: time = %.04f, %d, %s%s%s%s%s%s, %s%s, %s%s, [%d, %d]\n",
+		    // mb.timestamp_seconds, mb.num_of_clicks, (mb.left ? "left" : ""),
+		     //(mb.middle ? "middle" : ""), (mb.right ? "right" : ""), (mb.x1 ? "x1" : ""),
+		     //(mb.x2 ? "x2" : ""), (mb.touch ? "_touch" : ""), (mb.down ? "down" : ""),
+		     //(mb.up ? "up" : ""), (mb.pressed ? "pressed" : ""), (mb.released ? "released" : ""),
+		     //mb.x, mb.y);
 	}
 #endif
 
