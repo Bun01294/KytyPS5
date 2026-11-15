@@ -2169,3 +2169,322 @@ static int KYTY_SYSV_ABI AprCommandBufferMapEnd(void* command_buffer) {
 
 	uint32_t   type                = 0;
 	const auto command_buffer_addr = reinterpret_cast<uint64_t>(command_buffer);
+if (!AprShared::ReadGuest(command_buffer_addr + COMMAND_BUFFER_TYPE_OFFSET, &type)) {
+		return LibKernel::KERNEL_ERROR_EFAULT;
+	}
+	if ((type & APR_TYPE_MAP_ACTIVE) == 0) {
+		return LibKernel::KERNEL_ERROR_EPERM;
+	}
+
+	if (AppendNoOpCommand(command_buffer, APR_MAP_END_RECORD_SIZE) != OK) {
+		return LibKernel::KERNEL_ERROR_EFAULT;
+	}
+
+	UpdateCommandBufferTypeFlags(command_buffer_addr, 0, APR_TYPE_MAP_ACTIVE);
+	return OK;
+}
+
+static int KYTY_SYSV_ABI AmmCommandBufferMap(void* command_buffer, uint64_t va, uint64_t size,
+                                             int32_t type, int32_t prot) {
+	PRINT_NAME();
+
+	if (command_buffer == nullptr || !ValidateAmmMapArgs(va, size)) {
+		return LibKernel::KERNEL_ERROR_EINVAL;
+	}
+
+	CommandBufferState::AmmMapCommand command {};
+	command.kind = AmmCommandKind::MapAuto;
+	command.va   = va;
+	command.size = size;
+	command.type = type;
+	command.prot = prot;
+
+	return AppendCommandRecord(reinterpret_cast<uint64_t>(command_buffer), command,
+	                           AMM_MAP_RECORD_SIZE)
+	           ? OK
+	           : LibKernel::KERNEL_ERROR_EBUSY;
+}
+
+static int KYTY_SYSV_ABI AmmCommandBufferMapWithGpuMaskId(void* command_buffer, uint64_t va,
+                                                          uint64_t size, int32_t type, int32_t prot,
+                                                          uint8_t gpu_mask_id) {
+	PRINT_NAME();
+
+	if (command_buffer == nullptr || !ValidateAmmMapArgs(va, size)) {
+		return LibKernel::KERNEL_ERROR_EINVAL;
+	}
+
+	CommandBufferState::AmmMapCommand command {};
+	command.kind        = AmmCommandKind::MapAuto;
+	command.va          = va;
+	command.size        = size;
+	command.type        = type;
+	command.prot        = prot;
+	command.gpu_mask_id = gpu_mask_id;
+
+	return AppendCommandRecord(reinterpret_cast<uint64_t>(command_buffer), command,
+	                           AMM_MAP_RECORD_SIZE)
+	           ? OK
+	           : LibKernel::KERNEL_ERROR_EBUSY;
+}
+
+static int KYTY_SYSV_ABI AmmCommandBufferMapDirect(void* command_buffer, uint64_t va,
+                                                   uint64_t dmem_offset, uint64_t size,
+                                                   int32_t type, int32_t prot) {
+	PRINT_NAME();
+
+	if (command_buffer == nullptr || !ValidateAmmMapArgs(va, size) ||
+	    (dmem_offset & (AMM_PAGE_SIZE - 1u)) != 0) {
+		return LibKernel::KERNEL_ERROR_EINVAL;
+	}
+
+	CommandBufferState::AmmMapCommand command {};
+	command.kind        = AmmCommandKind::MapDirect;
+	command.va          = va;
+	command.dmem_offset = dmem_offset;
+	command.size        = size;
+	command.type        = type;
+	command.prot        = prot;
+
+	return AppendCommandRecord(reinterpret_cast<uint64_t>(command_buffer), command,
+	                           AMM_MAP_DIRECT_RECORD_SIZE)
+	           ? OK
+	           : LibKernel::KERNEL_ERROR_EBUSY;
+}
+
+static int KYTY_SYSV_ABI AmmCommandBufferMapDirectWithGpuMaskId(void* command_buffer, uint64_t va,
+                                                                uint64_t dmem_offset, uint64_t size,
+                                                                int32_t type, int32_t prot,
+                                                                uint8_t gpu_mask_id) {
+	PRINT_NAME();
+
+	if (command_buffer == nullptr || !ValidateAmmMapArgs(va, size) ||
+	    (dmem_offset & (AMM_PAGE_SIZE - 1u)) != 0) {
+		return LibKernel::KERNEL_ERROR_EINVAL;
+	}
+
+	CommandBufferState::AmmMapCommand command {};
+	command.kind        = AmmCommandKind::MapDirect;
+	command.va          = va;
+	command.dmem_offset = dmem_offset;
+	command.size        = size;
+	command.type        = type;
+	command.prot        = prot;
+	command.gpu_mask_id = gpu_mask_id;
+
+	return AppendCommandRecord(reinterpret_cast<uint64_t>(command_buffer), command,
+	                           AMM_MAP_DIRECT_RECORD_SIZE)
+	           ? OK
+	           : LibKernel::KERNEL_ERROR_EBUSY;
+}
+
+static int KYTY_SYSV_ABI AmmCommandBufferUnmap(void* command_buffer, uint64_t va, uint64_t size) {
+	PRINT_NAME();
+
+	if (command_buffer == nullptr || !ValidateAmmMapArgs(va, size)) {
+		return LibKernel::KERNEL_ERROR_EINVAL;
+	}
+
+	CommandBufferState::AmmMapCommand command {};
+	command.kind = AmmCommandKind::Unmap;
+	command.va   = va;
+	command.size = size;
+
+	return AppendCommandRecord(reinterpret_cast<uint64_t>(command_buffer), command,
+	                           AMM_UNMAP_RECORD_SIZE)
+	           ? OK
+	           : LibKernel::KERNEL_ERROR_EBUSY;
+}
+
+static int KYTY_SYSV_ABI AmmGiveDirectMemory(int64_t search_start, int64_t search_end,
+                                             uint64_t size, uint64_t align, int32_t usage,
+                                             int64_t* dmem_offset) {
+	PRINT_NAME();
+
+	constexpr uint64_t block_size = 0x200000;
+	if (dmem_offset == nullptr || size == 0 || (size & (block_size - 1)) != 0 ||
+	    (align & (block_size - 1)) != 0 || (usage != AMM_USAGE_DIRECT && usage != AMM_USAGE_AUTO)) {
+		return LibKernel::KERNEL_ERROR_EINVAL;
+	}
+
+	return LibKernel::Memory::AllocateDirectMemory(search_start, search_end, size,
+	                                               align != 0 ? align : block_size, 0, dmem_offset,
+	                                               usage == AMM_USAGE_AUTO);
+}
+
+static void KYTY_SYSV_ABI AmmGetVirtualAddressRanges(uint64_t* va_start, uint64_t* va_end,
+                                                     uint64_t* multimap_va_start,
+                                                     uint64_t* multimap_va_end) {
+	PRINT_NAME();
+
+	constexpr auto end = LibKernel::Memory::kExtendedMemoryBase + LibKernel::Memory::kExtendedMemorySize;
+	if (va_start != nullptr) {
+		AprShared::WriteGuest(reinterpret_cast<uint64_t>(va_start), LibKernel::Memory::kExtendedMemoryBase);
+	}
+	if (va_end != nullptr) {
+		AprShared::WriteGuest(reinterpret_cast<uint64_t>(va_end), end);
+	}
+	if (multimap_va_start != nullptr) {
+		AprShared::WriteGuest(reinterpret_cast<uint64_t>(multimap_va_start), end);
+	}
+	if (multimap_va_end != nullptr) {
+		AprShared::WriteGuest(reinterpret_cast<uint64_t>(multimap_va_end), end);
+	}
+}
+
+static int KYTY_SYSV_ABI AmmGetUsageStatsData(AmmUsageStatsData* stats) {
+	PRINT_NAME();
+
+	if (stats == nullptr || stats->size_in_bytes > sizeof(AmmUsageStatsData)) {
+		return LibKernel::KERNEL_ERROR_EINVAL;
+	}
+
+	AmmUsageStatsData out {};
+	out.size_in_bytes               = stats->size_in_bytes;
+	out.num_page_table_pool_entries = 512;
+	out.ring_idle_flags             = 0x7;
+	const auto write_size           = std::min<uint64_t>(stats->size_in_bytes, sizeof(out));
+	return AprShared::WriteGuestBytes(reinterpret_cast<uint64_t>(stats), &out, write_size)
+	           ? OK
+	           : LibKernel::KERNEL_ERROR_EFAULT;
+}
+
+static int KYTY_SYSV_ABI AmmSetPageTablePoolOccupancyNotificationThreshold(uint32_t) {
+	PRINT_NAME();
+
+	return OK;
+}
+
+static int KYTY_SYSV_ABI AmmSubmitCommandBuffer(void* command_buffer_base, uint32_t bytes,
+                                                uint32_t priority) {
+	PRINT_NAME();
+	return QueueCommandBuffer(Engine::Amm, reinterpret_cast<uint64_t>(command_buffer_base), bytes,
+	                          priority, nullptr, nullptr);
+}
+
+static int KYTY_SYSV_ABI AmmSubmitCommandBufferAndGetId(void* command_buffer_base, uint32_t bytes,
+                                                        uint32_t  priority,
+                                                        uint32_t* out_submission_id) {
+	PRINT_NAME();
+	if (out_submission_id == nullptr) {
+		return LibKernel::KERNEL_ERROR_EINVAL;
+	}
+	return QueueCommandBuffer(Engine::Amm, reinterpret_cast<uint64_t>(command_buffer_base), bytes,
+	                          priority, nullptr, out_submission_id);
+}
+
+static int KYTY_SYSV_ABI AmmSubmitCommandBufferAndGetResult(void*    command_buffer_base,
+                                                            uint32_t bytes, uint32_t priority,
+                                                            void*     result,
+                                                            uint32_t* out_submission_id) {
+	PRINT_NAME();
+	return QueueCommandBuffer(Engine::Amm, reinterpret_cast<uint64_t>(command_buffer_base), bytes,
+	                          priority, result, out_submission_id);
+}
+
+static int KYTY_SYSV_ABI AmmWaitCommandBufferCompletion(uint32_t submission_id) {
+	PRINT_NAME();
+	return AprShared::CompleteSubmission(submission_id) ? OK : LibKernel::KERNEL_ERROR_ESRCH;
+}
+
+} // namespace Ampr
+
+LIB_DEFINE(InitAmpr_1) {
+	LIB_FUNC("8aI7R7WaOlc", Ampr::CommandBufferConstructor);
+	LIB_FUNC("a8uLzYY--tM", Ampr::AprCommandBufferConstructor);
+	LIB_FUNC("Qs1xtplKo0U", Ampr::AprCommandBufferDestructor);
+	LIB_FUNC("GuchCTefuZw", Ampr::CommandBufferDestructor);
+	LIB_FUNC("N-FSPA4S3nI", Ampr::CommandBufferSetBuffer);
+	LIB_FUNC("baQO9ez2gL4", Ampr::CommandBufferReset);
+	LIB_FUNC("ULvXMDz56po", Ampr::CommandBufferClearBuffer);
+	LIB_FUNC("VEDMaQmJZng", Ampr::CommandBufferGetType);
+	LIB_FUNC("RPCAhx-aabE", Ampr::CommandBufferGetBufferBaseAddress);
+	LIB_FUNC("gzndltBEzWc", Ampr::CommandBufferGetNumCommands);
+	LIB_FUNC("GmOguNIsuKk", Ampr::CommandBufferConstructNop);
+	LIB_FUNC("tNn5WBkta60", Ampr::CommandBufferNop);
+	LIB_FUNC("pFQ9UHpO52s", Ampr::CommandBufferNopWithData);
+	LIB_FUNC("4UkZbYKVF7c", Ampr::CommandBufferConstructMarker);
+	LIB_FUNC("sWbST0oQKsc", Ampr::CommandBufferSetMarkerWithColor);
+	LIB_FUNC("4quckD2y7Pg", Ampr::CommandBufferSetMarker);
+	LIB_FUNC("f12ObAMEi9A", Ampr::CommandBufferPushMarkerWithColor);
+	LIB_FUNC("dXPaz65HNmk", Ampr::CommandBufferPushMarker);
+	LIB_FUNC("mv0O8Zg0woU", Ampr::CommandBufferPopMarker);
+	LIB_FUNC("DLfoNxTFNVk", Ampr::CommandBufferWaitOnAddress);
+	LIB_FUNC("V7GQTEeUfhw", Ampr::CommandBufferWaitOnAddress);
+	LIB_FUNC("cQb8Zr8Q0Y0", Ampr::CommandBufferWaitOnCounter);
+	LIB_FUNC("j0+3uJMxYJY", Ampr::CommandBufferWriteAddress);
+	LIB_FUNC("sJXyWHjP-F8", Ampr::CommandBufferWriteAddressOnCompletion);
+	LIB_FUNC("jK+yuYCI7MA", Ampr::CommandBufferWriteCounter);
+	LIB_FUNC("3wn42MWTzTs", Ampr::CommandBufferWriteCounterOnCompletion);
+	LIB_FUNC("bt3LHR9xjK4", Ampr::CommandBufferWriteAddressFromTimeCounter);
+	LIB_FUNC("FI2JD0jAHCs", Ampr::CommandBufferWriteAddressFromTimeCounterOnCompletion);
+	LIB_FUNC("t4ExS+SwLjs", Ampr::CommandBufferWriteAddressFromCounter);
+	LIB_FUNC("gSF5OsXdfIg", Ampr::CommandBufferWriteAddressFromCounterOnCompletion);
+	LIB_FUNC("enZm-6GjWqw", Ampr::CommandBufferWriteAddressFromCounterPair);
+	LIB_FUNC("ZLWtNUP6R5E", Ampr::CommandBufferWriteAddressFromCounterPairOnCompletion);
+	LIB_FUNC("vWU-odnS+fU", Ampr::MeasureCommandSizeReadFile);
+	LIB_FUNC("sSAUCCU1dv4", Ampr::MeasureCommandSizeWriteKernelEventQueue);
+	LIB_FUNC("Zi3dBUjgyXI", Ampr::MeasureCommandSizeWriteKernelEventQueue);
+	LIB_FUNC("C+IEj+BsAFM", Ampr::MeasureCommandSizeWriteAddress);
+	LIB_FUNC("x7SQEXfeovg", Ampr::MeasureCommandSizeWriteAddressFromTimeCounterOnCompletion);
+	LIB_FUNC("32AcaTaBPSY", Ampr::MeasureCommandSizeWriteAddressFromCounterOnCompletion);
+	LIB_FUNC("vxC58+DRk-U", Ampr::MeasureCommandSizeWriteAddressFromCounterPairOnCompletion);
+	LIB_FUNC("4muPEJ-x5N8", Ampr::MeasureCommandSizeWriteCounterOnCompletion);
+	LIB_FUNC("0BMj1hgG+kE", Ampr::MeasureCommandSizeFixed32);
+	LIB_FUNC("ClnsFLLLcss", Ampr::MeasureCommandSizeFixed32);
+	LIB_FUNC("4fgtGfXDrFc", Ampr::MeasureCommandSizeWriteAddress);
+	LIB_FUNC("gAtc79UTt5E", Ampr::MeasureCommandSizeFixed32);
+	LIB_FUNC("JYd9g9L+TmE", Ampr::MeasureCommandSizeFixed32);
+	LIB_FUNC("2Hw8gjMdwSY", Ampr::MeasureCommandSizeFixed32);
+	LIB_FUNC("I-Qm+MEso5c", Ampr::MeasureCommandSizeFixed32);
+	LIB_FUNC("6hbai6KIXkk", Ampr::MeasureAmmCommandSizeMap);
+	LIB_FUNC("m+fYyX8oFqw", Ampr::MeasureAmmCommandSizeMapWithGpuMaskId);
+	LIB_FUNC("ZFDZoN9IbVU", Ampr::MeasureAmmCommandSizeMapDirect);
+	LIB_FUNC("KUjtdPZJo5I", Ampr::MeasureAmmCommandSizeMapDirectWithGpuMaskId);
+	LIB_FUNC("Ayg6PIon2wA", Ampr::MeasureAmmCommandSizeUnmap);
+	LIB_FUNC("NNIZ-FMyz3M", Ampr::MeasureCommandSizeNop);
+	LIB_FUNC("Xp85BP3+BBI", Ampr::MeasureCommandSizeNopWithData);
+	LIB_FUNC("qesF88X4DRg", Ampr::MeasureCommandSizeReadFileGather);
+	LIB_FUNC("7nXGDGMXSqo", Ampr::MeasureCommandSizeReadFileScatter);
+	LIB_FUNC("DXmgc5op8Yw", Ampr::MeasureCommandSizeReadFileGatherScatter);
+	LIB_FUNC("rddQYXM0CjM", Ampr::MeasureCommandSizePopMarker);
+	LIB_FUNC("kdFImtTD0hc", Ampr::MeasureAprCommandSizeMapBegin);
+	LIB_FUNC("qvbdJc7bG+s", Ampr::MeasureAprCommandSizeMapDirectBegin);
+	LIB_FUNC("iwTNhyaemnw", Ampr::MeasureCommandSizePopMarker);
+	LIB_FUNC("tmfr97+ED5I", Ampr::MeasureCommandSizeMarkerWithColor);
+	LIB_FUNC("VGkEj4d6-Kg", Ampr::MeasureCommandSizeMarker);
+	LIB_FUNC("3OfeY4pzDV0", Ampr::MeasureCommandSizeMarkerWithColor);
+	LIB_FUNC("0RdLmAh7WVo", Ampr::MeasureCommandSizeMarker);
+	LIB_FUNC("pbnNnahE8vk", Ampr::MeasureCommandSizePopMarker);
+	LIB_FUNC("tZDDEo2tE5k", Ampr::CommandBufferGetSize);
+	LIB_FUNC("GnxKOHEawhk", Ampr::CommandBufferGetCurrentOffset);
+	LIB_FUNC("H896Pt-yB4I", Ampr::CommandBufferWriteKernelEventQueue);
+	LIB_FUNC("o67gODLFpls", Ampr::CommandBufferWriteKernelEventQueue);
+	LIB_FUNC("mQ16-QdKv7k", Ampr::AprCommandBufferReadFile);
+	LIB_FUNC("mZSbNJVJpV8", Ampr::AprCommandBufferReadFileGather);
+	LIB_FUNC("Jg-AgkdJHkk", Ampr::AprCommandBufferReadFileScatter);
+	LIB_FUNC("BVmR1H8l+XI", Ampr::AprCommandBufferReadFileGatherScatter);
+	LIB_FUNC("YPxkUDhgoNI", Ampr::AprCommandBufferResetGatherScatterState);
+	LIB_FUNC("Eul7AGEpjLo", Ampr::AprCommandBufferMapBegin);
+	LIB_FUNC("bFEs0Gs6D2A", Ampr::AprCommandBufferMapDirectBegin);
+	LIB_FUNC("X169CE6G3Y4", Ampr::AprCommandBufferMapEnd);
+	LIB_FUNC("Q07J7XpvhrU", Ampr::AmmGiveDirectMemory);
+	LIB_FUNC("wkQR9+xTFKY", Ampr::AmmGetVirtualAddressRanges);
+	LIB_FUNC("KqiWXLgCVe0", Ampr::AmmGetUsageStatsData);
+	LIB_FUNC("touqMEt6qXQ", Ampr::AmmSetPageTablePoolOccupancyNotificationThreshold);
+	LIB_FUNC("EDq5bqCqYpA", Ampr::AmmCommandBufferConstructor);
+	LIB_FUNC("pvUFDOHilnE", Ampr::AmmCommandBufferDestructor);
+	LIB_FUNC("JEVYGhDc97M", Ampr::AmmCommandBufferMap);
+	LIB_FUNC("ojBkmG7+CgE", Ampr::AmmCommandBufferMapWithGpuMaskId);
+	LIB_FUNC("8TBE+9XCZbI", Ampr::AmmCommandBufferMapDirect);
+	LIB_FUNC("kOfZlhbVAkc", Ampr::AmmCommandBufferMapDirectWithGpuMaskId);
+	LIB_FUNC("M-VFI2DJWQA", Ampr::AmmCommandBufferUnmap);
+	LIB_FUNC("lwS-7y3jcBI", Ampr::AmmSubmitCommandBuffer);
+	LIB_FUNC("NnKhlMJtIsI", Ampr::AmmSubmitCommandBufferAndGetId);
+	LIB_FUNC("OJf3vCckPAM", Ampr::AmmSubmitCommandBufferAndGetResult);
+	LIB_FUNC("HXymib4T8gc", Ampr::AmmWaitCommandBufferCompletion);
+}
+
+} // namespace LibAmpr
+
+} // namespace Libs
