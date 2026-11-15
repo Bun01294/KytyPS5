@@ -689,8 +689,8 @@ int64_t KYTY_SYSV_ABI KernelRead(int d, void* buf, size_t nbytes) {
 	if (file->special == SpecialFile::Random) {
 		FillRandomBuffer(buf, nbytes);
 
-		LOGF("\tRead %" PRIu64 " random bytes from: %s\n", static_cast<uint64_t>(nbytes),
-		     Common::PathToString(file->real_name).c_str());
+		//LOGF("\tRead %" PRIu64 " random bytes from: %s\n", static_cast<uint64_t>(nbytes),
+		     //Common::PathToString(file->real_name).c_str());
 
 		return static_cast<int64_t>(nbytes);
 	}
@@ -714,7 +714,7 @@ int64_t KYTY_SYSV_ABI KernelRead(int d, void* buf, size_t nbytes) {
 		return KERNEL_ERROR_EIO;
 	}
 
-	LOGF("\tRead %u bytes from: %s\n", bytes_read, Common::PathToString(file->real_name).c_str());
+	//LOGF("\tRead %u bytes from: %s\n", bytes_read, Common::PathToString(file->real_name).c_str());
 
 	return bytes_read;
 }
@@ -815,8 +815,8 @@ int64_t KYTY_SYSV_ABI KernelPread(int d, void* buf, size_t nbytes, int64_t offse
 	if (file->special == SpecialFile::Random) {
 		FillRandomBuffer(buf, nbytes);
 
-		LOGF("\tRead %" PRIu64 " random bytes (pos = %" PRId64 ") from: %s\n",
-		     static_cast<uint64_t>(nbytes), offset, Common::PathToString(file->real_name).c_str());
+		//LOGF("\tRead %" PRIu64 " random bytes (pos = %" PRId64 ") from: %s\n",
+		     //static_cast<uint64_t>(nbytes), offset, Common::PathToString(file->real_name).c_str());
 
 		return static_cast<int64_t>(nbytes);
 	}
@@ -998,8 +998,8 @@ int64_t KYTY_SYSV_ABI KernelPwrite(int d, const void* buf, size_t nbytes, int64_
 		return KERNEL_ERROR_EIO;
 	}
 
-	LOGF("\tWrite %u bytes (pos = %" PRId64 ") to: %s\n", bytes_written, offset,
-	     Common::PathToString(file->real_name).c_str());
+	//LOGF("\tWrite %u bytes (pos = %" PRId64 ") to: %s\n", bytes_written, offset,
+	     //Common::PathToString(file->real_name).c_str());
 
 	return bytes_written;
 }
@@ -1142,8 +1142,8 @@ int64_t KYTY_SYSV_ABI KernelLseek(int d, int64_t offset, int whence) {
 		EXIT_IF(file->f.Tell() != position);
 	}
 
-	LOGF("\tLseek (pos = %" PRIu64 ") to: %s\n", position,
-	     Common::PathToString(file->real_name).c_str());
+	//LOGF("\tLseek (pos = %" PRIu64 ") to: %s\n", position,
+	     //Common::PathToString(file->real_name).c_str());
 
 	return static_cast<int64_t>(position);
 }
@@ -1155,7 +1155,7 @@ int KYTY_SYSV_ABI KernelStat(const char* path, FileStat* sb) {
 		return KERNEL_ERROR_EINVAL;
 	}
 
-	LOGF("\t KernelStat: %s\n", path);
+	//LOGF("\t KernelStat: %s\n", path);
 
 	// The guest root holds only mount points and has no host directory.
 	if (std::strcmp(path, "/") == 0) {
@@ -1205,7 +1205,7 @@ int KYTY_SYSV_ABI KernelFstat(int d, FileStat* sb) {
 
 	EXIT_IF(!file->opened);
 
-	LOGF("\tKernelFstat: %s\n", Common::PathToString(file->real_name).c_str());
+	//LOGF("\tKernelFstat: %s\n", Common::PathToString(file->real_name).c_str());
 
 	FileStat stat {};
 	stat.st_mode = 0000777u | (file->directory ? 0040000u : 0100000u);
