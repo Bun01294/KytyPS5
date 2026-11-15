@@ -3,6 +3,7 @@
 #include "libs/libs.h"
 #include "libs/videoDec2Decoder.h"
 #include "loader/symbolDatabase.h"
+#include "common/logging/log.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -244,6 +245,8 @@ static int32_t ValidateDecoderConfig(const Videodec2DecoderConfigInfo* config,
 static int32_t KYTY_SYSV_ABI
 QueryComputeMemoryInfo(Videodec2ComputeMemoryInfo* compute_memory_info) {
 	PRINT_NAME();
+	Log::WriteToConsoleAndLog(">>> Videodec2::QueryComputeMemoryInfo(size=%zu)\n",
+	                          compute_memory_info ? compute_memory_info->this_size : 0);
 
 	if (compute_memory_info == nullptr) {
 		return VIDEODEC2_ERROR_ARGUMENT_POINTER;
@@ -263,6 +266,11 @@ static int32_t KYTY_SYSV_ABI AllocateComputeQueue(
     const Videodec2ComputeConfigInfo* compute_config_info,
     const Videodec2ComputeMemoryInfo* compute_memory_info, Videodec2ComputeQueue* compute_queue) {
 	PRINT_NAME();
+	Log::WriteToConsoleAndLog(">>> Videodec2::AllocateComputeQueue(cfg_size=%zu, mem_size=%zu, pipe=%u, q=%u)\n",
+	                          compute_config_info ? compute_config_info->this_size : 0,
+	                          compute_memory_info ? compute_memory_info->this_size : 0,
+	                          compute_config_info ? compute_config_info->compute_pipe_id : 999,
+	                          compute_config_info ? compute_config_info->compute_queue_id : 999);
 
 	if (compute_config_info == nullptr || compute_memory_info == nullptr ||
 	    compute_queue == nullptr) {
@@ -318,6 +326,12 @@ static size_t FrameBufferSize(const Videodec2DecoderConfigInfo& config) {
 static int32_t KYTY_SYSV_ABI QueryDecoderMemoryInfo(const Videodec2DecoderConfigInfo* config,
                                                     Videodec2DecoderMemoryInfo*       memory_info) {
 	PRINT_NAME();
+	Log::WriteToConsoleAndLog(">>> Videodec2::QueryDecoderMemoryInfo(cfg_size=%zu, mem_size=%zu, codec=%u, w=%d, h=%d)\n",
+	                          config ? config->this_size : 0,
+	                          memory_info ? memory_info->this_size : 0,
+	                          config ? config->codec_type : 0,
+	                          config ? config->max_frame_width : 0,
+	                          config ? config->max_frame_height : 0);
 
 	if (config == nullptr || memory_info == nullptr) {
 		return VIDEODEC2_ERROR_ARGUMENT_POINTER;
@@ -350,6 +364,14 @@ static int32_t KYTY_SYSV_ABI CreateDecoder(const Videodec2DecoderConfigInfo* con
                                            const Videodec2DecoderMemoryInfo* memory_info,
                                            Videodec2Decoder*                 decoder) {
 	PRINT_NAME();
+	Log::WriteToConsoleAndLog(">>> Videodec2::CreateDecoder(cfg_size=%zu, mem_size=%zu, codec=%u, w=%d, h=%d, q=%p)\n",
+	                          config ? config->this_size : 0,
+	                          memory_info ? memory_info->this_size : 0,
+	                          config ? config->codec_type : 0,
+	                          config ? config->max_frame_width : 0,
+	                          config ? config->max_frame_height : 0,
+	                          config ? config->compute_queue : nullptr);
+
 	if (config == nullptr || memory_info == nullptr || decoder == nullptr) {
 		return VIDEODEC2_ERROR_ARGUMENT_POINTER;
 	}
@@ -414,8 +436,13 @@ static int32_t KYTY_SYSV_ABI Decode(Videodec2Decoder decoder, const Videodec2Inp
                                     Videodec2FrameBuffer* frame_buffer,
                                     Videodec2OutputInfo*  output_info) {
 	PRINT_NAME();
+	Log::WriteToConsoleAndLog(">>> Videodec2::Decode(au_size=%zu, fb_size=%zu, out_size=%zu)\n",
+	                          input_data ? input_data->au_size : 0,
+	                          frame_buffer ? frame_buffer->frame_buffer_size : 0,
+	                          output_info ? output_info->this_size : 0);
 
 	auto* state = GetDecoder(decoder);
+		
 	if (state == nullptr) {
 		return VIDEODEC2_ERROR_DECODER_INSTANCE;
 	}
