@@ -350,7 +350,7 @@ static int32_t KYTY_SYSV_ABI CreateDecoder(const Videodec2DecoderConfigInfo* con
                                            const Videodec2DecoderMemoryInfo* memory_info,
                                            Videodec2Decoder*                 decoder) {
 	PRINT_NAME();
-
+	return VIDEODEC2_ERROR_API_FAIL;
 	if (config == nullptr || memory_info == nullptr || decoder == nullptr) {
 		return VIDEODEC2_ERROR_ARGUMENT_POINTER;
 	}
