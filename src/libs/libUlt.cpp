@@ -6,6 +6,8 @@
 #include "loader/symbolDatabase.h"
 
 #include <atomic>
+#include <chrono>
+#include <cinttypes>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -44,9 +46,11 @@ struct UltUlthreadRuntimeOptParam {
 };
 
 struct UltMutexState {
-	std::recursive_mutex  mutex;
-	std::atomic<uint32_t> lock_count {0};
-	uint32_t              attribute = 0;
+	std::mutex              mutex;
+	std::condition_variable cv;
+	std::thread::id         owner {};
+	uint32_t                lock_count = 0;
+	uint32_t                attribute  = 0;
 };
 
 struct UltSemaphoreState {
@@ -162,10 +166,6 @@ static int KYTY_SYSV_ABI UltUlthreadRuntimeOptParamInitialize(UltUlthreadRuntime
 		return ULT_ERROR_NULL;
 	}
 
-	LOGF("\t opt_param     = 0x%016" PRIx64 "\n"
-	     "\t build_version = 0x%08" PRIx32 "\n",
-	     reinterpret_cast<uint64_t>(opt_param), build_version);
-
 	std::memset(opt_param, 0, sizeof(*opt_param));
 
 	return OK;
@@ -190,18 +190,11 @@ static int KYTY_SYSV_ABI UltUlthreadRuntimeCreate(void* runtime, const char* nam
 		return ULT_ERROR_NULL;
 	}
 
-	LOGF("\t runtime           = 0x%016" PRIx64 "\n"
-	     "\t name              = 0x%016" PRIx64 "\n"
-	     "\t max_num_ulthread  = %" PRIu32 "\n"
-	     "\t num_worker_thread = %" PRIu32 "\n"
-	     "\t work_area         = 0x%016" PRIx64 "\n"
-	     "\t opt_param         = 0x%016" PRIx64 "\n"
-	     "\t build_version     = 0x%08" PRIx32 "\n",
-	     reinterpret_cast<uint64_t>(runtime), reinterpret_cast<uint64_t>(name), max_num_ulthread,
-	     num_worker_thread, reinterpret_cast<uint64_t>(work_area),
-	     reinterpret_cast<uint64_t>(opt_param), build_version);
-
-	std::memset(runtime, 0, 4096);
+	LOGF(">>> UltUlthreadRuntimeCreate(runtime=%p, max_ult=%u, workers=%u)\n", runtime,
+	     max_num_ulthread, num_worker_thread);
+	(void)name;
+	(void)opt_param;
+	(void)build_version;
 
 	std::scoped_lock lock(g_ult_mutex);
 	g_ult_runtimes[runtime] = {max_num_ulthread, num_worker_thread, work_area};
@@ -220,18 +213,11 @@ static int KYTY_SYSV_ABI UltUlthreadCreate(void* ulthread, const char* name, Ult
                                            uint32_t build_version) {
 	PRINT_NAME();
 
-	LOGF("\t ulthread      = 0x%016" PRIx64 "\n"
-	     "\t name          = 0x%016" PRIx64 "\n"
-	     "\t entry         = 0x%016" PRIx64 "\n"
-	     "\t arg           = 0x%016" PRIx64 "\n"
-	     "\t context       = 0x%016" PRIx64 "\n"
-	     "\t size_context  = 0x%016" PRIx64 "\n"
-	     "\t runtime       = 0x%016" PRIx64 "\n"
-	     "\t opt_param     = 0x%016" PRIx64 "\n"
-	     "\t build_version = 0x%08" PRIx32 "\n",
-	     reinterpret_cast<uint64_t>(ulthread), reinterpret_cast<uint64_t>(name),
-	     reinterpret_cast<uint64_t>(entry), arg, reinterpret_cast<uint64_t>(context), size_context,
-	     reinterpret_cast<uint64_t>(runtime), reinterpret_cast<uint64_t>(opt_param), build_version);
+	LOGF(">>> UltUlthreadCreate(ulthread=%p, entry=%p, arg=0x%" PRIx64 ")\n", ulthread,
+	     reinterpret_cast<void*>(entry), arg);
+	(void)size_context;
+	(void)opt_param;
+	(void)build_version;
 
 	if (ulthread == nullptr || entry == nullptr || context == nullptr || runtime == nullptr) {
 		return ULT_ERROR_NULL;
@@ -246,10 +232,6 @@ static int KYTY_SYSV_ABI UltUlthreadCreate(void* ulthread, const char* name, Ult
 		if (g_ult_runtimes.find(runtime) == g_ult_runtimes.end()) {
 			return ULT_ERROR_STATE;
 		}
-		if (g_ult_ulthreads.find(ulthread) != g_ult_ulthreads.end()) {
-			return ULT_ERROR_STATE;
-		}
-		std::memset(ulthread, 0, 512);
 		g_ult_ulthreads[ulthread] = state;
 	}
 
@@ -266,10 +248,6 @@ static int KYTY_SYSV_ABI UltUlthreadCreate(void* ulthread, const char* name, Ult
 
 static int KYTY_SYSV_ABI UltUlthreadJoin(void* ulthread, int32_t* status) {
 	PRINT_NAME();
-
-	LOGF("\t ulthread = 0x%016" PRIx64 "\n"
-	     "\t status   = 0x%016" PRIx64 "\n",
-	     reinterpret_cast<uint64_t>(ulthread), reinterpret_cast<uint64_t>(status));
 
 	if (ulthread == nullptr) {
 		return ULT_ERROR_NULL;
@@ -301,14 +279,11 @@ static int KYTY_SYSV_ABI UltUlthreadJoin(void* ulthread, int32_t* status) {
 static int KYTY_SYSV_ABI UltWaitingQueueResourcePoolOptParamInitialize(
     UltWaitingQueueResourcePoolOptParam* opt_param, uint32_t build_version) {
 	PRINT_NAME();
+	(void)build_version;
 
 	if (opt_param == nullptr) {
 		return ULT_ERROR_NULL;
 	}
-
-	LOGF("\t opt_param     = 0x%016" PRIx64 "\n"
-	     "\t build_version = 0x%08" PRIx32 "\n",
-	     reinterpret_cast<uint64_t>(opt_param), build_version);
 
 	std::memset(opt_param, 0, sizeof(*opt_param));
 
@@ -328,23 +303,13 @@ static int KYTY_SYSV_ABI UltWaitingQueueResourcePoolCreate(void* pool, const cha
                                                            void* work_area, const void* opt_param,
                                                            uint32_t build_version) {
 	PRINT_NAME();
+	(void)name;
+	(void)opt_param;
+	(void)build_version;
 
 	if (pool == nullptr) {
 		return ULT_ERROR_NULL;
 	}
-
-	LOGF("\t pool             = 0x%016" PRIx64 "\n"
-	     "\t name             = 0x%016" PRIx64 "\n"
-	     "\t num_threads      = %" PRIu32 "\n"
-	     "\t num_sync_objects = %" PRIu32 "\n"
-	     "\t work_area        = 0x%016" PRIx64 "\n"
-	     "\t opt_param        = 0x%016" PRIx64 "\n"
-	     "\t build_version    = 0x%08" PRIx32 "\n",
-	     reinterpret_cast<uint64_t>(pool), reinterpret_cast<uint64_t>(name), num_threads,
-	     num_sync_objects, reinterpret_cast<uint64_t>(work_area),
-	     reinterpret_cast<uint64_t>(opt_param), build_version);
-
-	std::memset(pool, 0, 256);
 
 	std::scoped_lock lock(g_ult_mutex);
 	g_ult_resource_pools[pool] = {num_threads, num_sync_objects, work_area};
@@ -401,11 +366,6 @@ static uint64_t KYTY_SYSV_ABI UltQueueDataResourcePoolGetWorkAreaSize(uint32_t n
                                                                       uint32_t num_queue_object) {
 	PRINT_NAME();
 
-	LOGF("\t num_data         = %" PRIu32 "\n"
-	     "\t data_size        = 0x%016" PRIx64 "\n"
-	     "\t num_queue_object = %" PRIu32 "\n",
-	     num_data, data_size, num_queue_object);
-
 	const uint64_t data_area  = static_cast<uint64_t>(num_data) * ult_align_up(data_size, 8u);
 	const uint64_t queue_area = static_cast<uint64_t>(num_queue_object) * 512u;
 
@@ -419,24 +379,13 @@ static int KYTY_SYSV_ABI UltQueueDataResourcePoolCreate(void* pool, const char* 
                                                         void* work_area, const void* opt_param,
                                                         uint32_t build_version) {
 	PRINT_NAME();
+	(void)name;
+	(void)opt_param;
+	(void)build_version;
 
 	if (pool == nullptr) {
 		return ULT_ERROR_NULL;
 	}
-
-	LOGF("\t pool                        = 0x%016" PRIx64 "\n"
-	     "\t name                        = 0x%016" PRIx64 "\n"
-	     "\t num_data                    = %" PRIu32 "\n"
-	     "\t data_size                   = 0x%016" PRIx64 "\n"
-	     "\t num_queue_object            = %" PRIu32 "\n"
-	     "\t waiting_queue_resource_pool = 0x%016" PRIx64 "\n"
-	     "\t work_area                   = 0x%016" PRIx64 "\n"
-	     "\t opt_param                   = 0x%016" PRIx64 "\n"
-	     "\t build_version               = 0x%08" PRIx32 "\n",
-	     reinterpret_cast<uint64_t>(pool), reinterpret_cast<uint64_t>(name), num_data, data_size,
-	     num_queue_object, reinterpret_cast<uint64_t>(waiting_queue_resource_pool),
-	     reinterpret_cast<uint64_t>(work_area), reinterpret_cast<uint64_t>(opt_param),
-	     build_version);
 
 	std::scoped_lock lock(g_ult_mutex);
 	if (waiting_queue_resource_pool != nullptr &&
@@ -444,7 +393,6 @@ static int KYTY_SYSV_ABI UltQueueDataResourcePoolCreate(void* pool, const char* 
 		return ULT_ERROR_INVALID;
 	}
 
-	std::memset(pool, 0, 512);
 	g_ult_queue_data_pools[pool] = {num_data, data_size, num_queue_object,
 	                                waiting_queue_resource_pool, work_area};
 
@@ -456,22 +404,13 @@ static int KYTY_SYSV_ABI UltQueueCreate(void* queue, const char* name, uint64_t 
                                         void* queue_data_resource_pool, const void* opt_param,
                                         uint32_t build_version) {
 	PRINT_NAME();
+	(void)name;
+	(void)opt_param;
+	(void)build_version;
 
 	if (queue == nullptr) {
 		return ULT_ERROR_NULL;
 	}
-
-	LOGF("\t queue                       = 0x%016" PRIx64 "\n"
-	     "\t name                        = 0x%016" PRIx64 "\n"
-	     "\t data_size                   = 0x%016" PRIx64 "\n"
-	     "\t waiting_queue_resource_pool = 0x%016" PRIx64 "\n"
-	     "\t queue_data_resource_pool    = 0x%016" PRIx64 "\n"
-	     "\t opt_param                   = 0x%016" PRIx64 "\n"
-	     "\t build_version               = 0x%08" PRIx32 "\n",
-	     reinterpret_cast<uint64_t>(queue), reinterpret_cast<uint64_t>(name), data_size,
-	     reinterpret_cast<uint64_t>(waiting_queue_resource_pool),
-	     reinterpret_cast<uint64_t>(queue_data_resource_pool),
-	     reinterpret_cast<uint64_t>(opt_param), build_version);
 
 	auto state          = std::make_shared<UltQueueState>();
 	state->data_size    = data_size;
@@ -487,7 +426,6 @@ static int KYTY_SYSV_ABI UltQueueCreate(void* queue, const char* name, uint64_t 
 	}
 	state->capacity = data_pool->second.num_data;
 
-	std::memset(queue, 0, 512);
 	g_ult_queues[queue] = std::move(state);
 
 	return OK;
@@ -507,12 +445,6 @@ static int KYTY_SYSV_ABI UltQueuePush(void* queue, const void* data) {
 
 	std::scoped_lock lock(state->mutex);
 	if (state->capacity != 0 && state->items.size() >= state->capacity) {
-		static std::atomic<uint32_t> log_count {0};
-		if (log_count.fetch_add(1) < 32) {
-			LOGF("\t queue full, dropping pushed item: queue=0x%016" PRIx64 " capacity=%" PRIu32
-			     " data_size=0x%016" PRIx64 "\n",
-			     reinterpret_cast<uint64_t>(queue), state->capacity, state->data_size);
-		}
 		return OK;
 	}
 
@@ -553,14 +485,11 @@ static int KYTY_SYSV_ABI UltQueueTryPop(void* queue, void* data) {
 static int KYTY_SYSV_ABI UltMutexOptParamInitialize(UltMutexOptParam* opt_param,
                                                     uint32_t          build_version) {
 	PRINT_NAME();
+	(void)build_version;
 
 	if (opt_param == nullptr) {
 		return ULT_ERROR_NULL;
 	}
-
-	LOGF("\t opt_param     = 0x%016" PRIx64 "\n"
-	     "\t build_version = 0x%08" PRIx32 "\n",
-	     reinterpret_cast<uint64_t>(opt_param), build_version);
 
 	std::memset(opt_param, 0, sizeof(*opt_param));
 
@@ -571,6 +500,8 @@ static int KYTY_SYSV_ABI UltMutexCreate(void* mutex, const char* name,
                                         void*                   waiting_queue_resource_pool,
                                         const UltMutexOptParam* opt_param, uint32_t build_version) {
 	PRINT_NAME();
+	(void)name;
+	(void)build_version;
 
 	if (mutex == nullptr) {
 		return ULT_ERROR_NULL;
@@ -578,16 +509,6 @@ static int KYTY_SYSV_ABI UltMutexCreate(void* mutex, const char* name,
 
 	auto state       = std::make_shared<UltMutexState>();
 	state->attribute = (opt_param != nullptr ? opt_param->attribute : 0);
-
-	LOGF("\t mutex                       = 0x%016" PRIx64 "\n"
-	     "\t name                        = 0x%016" PRIx64 "\n"
-	     "\t waiting_queue_resource_pool = 0x%016" PRIx64 "\n"
-	     "\t attribute                   = 0x%08" PRIx32 "\n"
-	     "\t build_version               = 0x%08" PRIx32 "\n",
-	     reinterpret_cast<uint64_t>(mutex), reinterpret_cast<uint64_t>(name),
-	     reinterpret_cast<uint64_t>(waiting_queue_resource_pool), state->attribute, build_version);
-
-	std::memset(mutex, 0, 256);
 
 	std::scoped_lock lock(g_ult_mutex);
 	if (waiting_queue_resource_pool != nullptr &&
@@ -602,15 +523,15 @@ static int KYTY_SYSV_ABI UltMutexCreate(void* mutex, const char* name,
 static int KYTY_SYSV_ABI UltMutexLock(void* mutex) {
 	PRINT_NAME();
 
+	if (mutex == nullptr) {
+		return ULT_ERROR_NULL;
+	}
+
 	std::shared_ptr<UltMutexState> state;
 	{
 		std::scoped_lock lock(g_ult_mutex);
 		auto             it = g_ult_mutexes.find(mutex);
 		if (it == g_ult_mutexes.end()) {
-			if (mutex == nullptr) {
-				return ULT_ERROR_NULL;
-			}
-			// Auto-create if game statically initialized or reused mutex address
 			state                = std::make_shared<UltMutexState>();
 			g_ult_mutexes[mutex] = state;
 		} else {
@@ -618,8 +539,19 @@ static int KYTY_SYSV_ABI UltMutexLock(void* mutex) {
 		}
 	}
 
-	state->mutex.lock();
-	state->lock_count.fetch_add(1, std::memory_order_relaxed);
+	const auto self = std::this_thread::get_id();
+	std::unique_lock lock(state->mutex);
+	if (state->owner == self) {
+		state->lock_count++;
+		return OK;
+	}
+	while (state->lock_count > 0) {
+		if (state->cv.wait_for(lock, std::chrono::seconds(2)) == std::cv_status::timeout) {
+			LOGF(">>> ULT MUTEX WAIT >2s on mutex=%p (lock_count=%u)\n", mutex, state->lock_count);
+		}
+	}
+	state->owner      = self;
+	state->lock_count = 1;
 
 	return OK;
 }
@@ -627,14 +559,15 @@ static int KYTY_SYSV_ABI UltMutexLock(void* mutex) {
 static int KYTY_SYSV_ABI UltMutexTryLock(void* mutex) {
 	PRINT_NAME();
 
+	if (mutex == nullptr) {
+		return ULT_ERROR_NULL;
+	}
+
 	std::shared_ptr<UltMutexState> state;
 	{
 		std::scoped_lock lock(g_ult_mutex);
 		auto             it = g_ult_mutexes.find(mutex);
 		if (it == g_ult_mutexes.end()) {
-			if (mutex == nullptr) {
-				return ULT_ERROR_NULL;
-			}
 			state                = std::make_shared<UltMutexState>();
 			g_ult_mutexes[mutex] = state;
 		} else {
@@ -642,10 +575,13 @@ static int KYTY_SYSV_ABI UltMutexTryLock(void* mutex) {
 		}
 	}
 
-	if (!state->mutex.try_lock()) {
+	const auto self = std::this_thread::get_id();
+	std::scoped_lock lock(state->mutex);
+	if (state->lock_count > 0 && state->owner != self) {
 		return ULT_ERROR_BUSY;
 	}
-	state->lock_count.fetch_add(1, std::memory_order_relaxed);
+	state->owner = self;
+	state->lock_count++;
 
 	return OK;
 }
@@ -663,13 +599,16 @@ static int KYTY_SYSV_ABI UltMutexUnlock(void* mutex) {
 		state = it->second;
 	}
 
-	uint32_t prev = state->lock_count.load(std::memory_order_relaxed);
-	while (prev > 0) {
-		if (state->lock_count.compare_exchange_weak(prev, prev - 1, std::memory_order_relaxed)) {
-			state->mutex.unlock();
-			break;
+	{
+		std::scoped_lock lock(state->mutex);
+		if (state->lock_count > 0) {
+			state->lock_count--;
+			if (state->lock_count == 0) {
+				state->owner = std::thread::id {};
+			}
 		}
 	}
+	state->cv.notify_one();
 
 	return OK;
 }
@@ -730,10 +669,6 @@ static int KYTY_SYSV_ABI UltSemaphoreCreate(void* semaphore, const char* name,
 	    g_ult_resource_pools.find(waiting_queue_resource_pool) == g_ult_resource_pools.end()) {
 		return ULT_ERROR_INVALID;
 	}
-	if (g_ult_semaphores.find(semaphore) != g_ult_semaphores.end()) {
-		return ULT_ERROR_STATE;
-	}
-	std::memset(semaphore, 0, 256);
 	g_ult_semaphores[semaphore] = std::move(state);
 	return OK;
 }
