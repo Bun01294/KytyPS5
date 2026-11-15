@@ -313,11 +313,10 @@ static int32_t KYTY_SYSV_ABI ReleaseComputeQueue(Videodec2ComputeQueue compute_q
 }
 
 static size_t FrameBufferSize(const Videodec2DecoderConfigInfo& config) {
-	if (config.codec_type != VIDEODEC2_CODEC_TYPE_AVC || config.max_frame_width <= 0 ||
-	    config.max_frame_height <= 0) {
-		return VIDEODEC2_MIN_MEMORY_SIZE;
+	if (config.max_frame_width <= 0 || config.max_frame_height <= 0) {
+		return 8ull * 1024ull * 1024ull; // 8 MB fallback if dimensions aren't specified
 	}
-	// AVC output: 256-byte pitch, 16-line maximum height, and 4096 bytes of metadata.
+	// NV12 output: 256-byte pitch, 16-line aligned height, and 4096 bytes of metadata.
 	const auto pitch  = (static_cast<size_t>(config.max_frame_width) + 255u) & ~size_t {255};
 	const auto height = (static_cast<size_t>(config.max_frame_height) + 15u) & ~size_t {15};
 	return pitch * height * 3 / 2 + 4096;
