@@ -416,7 +416,7 @@ static int32_t KYTY_SYSV_ABI CreateDecoder(const Videodec2DecoderConfigInfo* con
 	}
 
 	*decoder = state;
-	LOGF(">>> Videodec2::CreateDecoder SUCCESS -> %p\n", state);
+	LOGF(">>> Videodec2::CreateDecoder SUCCESS -> %p\n", static_cast<void*>(state));
 	return OK;
 }
 
